@@ -52,6 +52,22 @@ constexpr uint16_t operator "" _checksum(const char* s, size_t n) {
 
 #else /* !CHECKSUM_USE_CPP */
 
+#ifdef __CDT_PARSER__
+
+#ifdef DEBUG
+
+#include <utils.h>
+#define CHECKSUM(X) get_checksum(X)
+
+#else /* !DEBUG */
+
+/* this macro shredding kills the eclipse CDT indexer (__CDT_PARSER__) */
+#define CHECKSUM(X) ((uint16_t)sizeof(X))
+
+#endif /* DEBUG */
+
+#else
+
 /* Adam Green's old and crusty C approach. */
 /* Recursively define SUM1, the basic checksum % 255 */
 #define SUM1_1(X) ((X)[0] % 255)
@@ -199,6 +215,9 @@ constexpr uint16_t operator "" _checksum(const char* s, size_t n) {
                      sizeof(X) == 33 ? CHECKSUM_32(X) : \
                      0xFFFF)
 #endif /* DEBUG */
+
+#endif /* __CDT_PARSER__ */
+
 #endif /* CHECKSUM_USE_CPP */
 
 #endif /* _CHECKSUM_MACRO_H_ */
