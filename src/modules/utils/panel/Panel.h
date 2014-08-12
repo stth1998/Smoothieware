@@ -10,6 +10,7 @@
 
 #include "Button.h"
 #include <string>
+#include <vector>
 using std::string;
 
 #define MENU_MODE                  0
@@ -19,6 +20,7 @@ using std::string;
 
 class LcdBase;
 class PanelScreen;
+class CustomScreen;
 
 class Panel : public Module {
     public:
@@ -77,7 +79,7 @@ class Panel : public Module {
         // public as it is directly accessed by screens... not good
         // TODO pass lcd into ctor of each sub screen
         LcdBase* lcd;
-        PanelScreen* custom_screen;
+        std::vector<CustomScreen*> custom_screens;
         PanelScreen* temperature_screen;
 
         // as panelscreen accesses private fields in Panel

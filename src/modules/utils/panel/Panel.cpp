@@ -99,7 +99,7 @@ void Panel::on_module_loaded()
     }
 
     // these need to be called here as they need the config cache loaded as they enumerate modules
-    this->custom_screen= new CustomScreen();
+    CustomScreen::create_CustomScreens(this->custom_screens);
     setup_temperature_screen();
 
     // some panels may need access to this global info
@@ -282,7 +282,8 @@ void Panel::on_idle(void *argument)
 
         // Default top screen
         this->top_screen= new MainMenuScreen();
-        this->custom_screen->set_parent(this->top_screen);
+        for (auto cs : this->custom_screens)
+            cs->set_parent(this->top_screen);
         this->start_up = false;
         return;
     }

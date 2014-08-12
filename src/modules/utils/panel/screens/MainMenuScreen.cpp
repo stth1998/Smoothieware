@@ -13,6 +13,7 @@
 #include "FileScreen.h"
 #include "ControlScreen.h"
 #include "PrepareScreen.h"
+#include "CustomScreen.h"
 #include "libs/nuts_bolts.h"
 #include "libs/utils.h"
 #include "modules/utils/player/PlayerPublicAccess.h"
@@ -107,7 +108,7 @@ PanelScreen* MainMenuScreen::setupConfigureScreen()
 void MainMenuScreen::on_enter()
 {
     THEPANEL->enter_menu_mode();
-    THEPANEL->setup_menu(6);
+    THEPANEL->setup_menu(5 + THEPANEL->custom_screens.size());
     this->refresh_menu();
 }
 
@@ -128,9 +129,12 @@ void MainMenuScreen::display_menu_line(uint16_t line)
         case 1: THEPANEL->lcd->printf(THEPANEL->is_playing() ? "Abort" : "Play"); break;
         case 2: THEPANEL->lcd->printf("Jog"); break;
         case 3: THEPANEL->lcd->printf("Prepare"); break;
-        case 4: THEPANEL->lcd->printf("Custom"); break;
-        case 5: THEPANEL->lcd->printf("Configure"); break;
-            //case 5: THEPANEL->lcd->printf("Tune"); break;
+        default:
+                if (line < (4 + THEPANEL->custom_screens.size()))
+                    THEPANEL->lcd->printf(THEPANEL->custom_screens.at(line - 4)->display_name());
+                else
+                    THEPANEL->lcd->printf("Configure");
+                break;
     }
 }
 
@@ -141,9 +145,13 @@ void MainMenuScreen::clicked_menu_entry(uint16_t line)
         case 1: THEPANEL->is_playing() ? abort_playing() : THEPANEL->enter_screen(this->file_screen); break;
         case 2: THEPANEL->enter_screen(this->jog_screen     ); break;
         case 3: THEPANEL->enter_screen(this->prepare_screen ); break;
-        case 4: THEPANEL->enter_screen(THEPANEL->custom_screen ); break;
-        case 5: if(this->configure_screen == nullptr) this->configure_screen= setupConfigureScreen();
-                THEPANEL->enter_screen(this->configure_screen );
+        default:
+                if (line < (4 + THEPANEL->custom_screens.size()))
+                    THEPANEL->enter_screen(THEPANEL->custom_screens.at(line - 4));
+                else {
+                    if(this->configure_screen == nullptr) this->configure_screen= setupConfigureScreen();
+                    THEPANEL->enter_screen(this->configure_screen );
+                }
                 break;
     }
 }

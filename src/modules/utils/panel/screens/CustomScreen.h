@@ -16,7 +16,8 @@
 class CustomScreen : public PanelScreen
 {
 public:
-    CustomScreen();
+    // factory method
+    static void create_CustomScreens(std::vector<CustomScreen*> &place_menus_inside);
 
     void on_refresh();
     void on_enter();
@@ -24,10 +25,15 @@ public:
     void display_menu_line(uint16_t line);
     void clicked_menu_entry(uint16_t line);
     int idle_timeout_secs() { return 60; }
+    const char* display_name();
 
 private:
+    CustomScreen(const char *menu_name, uint16_t menu_checksum);
+
     const char *command;
+
     std::vector<std::tuple<const char*,const char*> > menu_items;
+    const char* menu_name;
 };
 
 #endif
