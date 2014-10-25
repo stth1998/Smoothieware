@@ -23,7 +23,6 @@ class TemperatureControl : public Module {
         void on_main_loop(void* argument);
         void on_gcode_execute(void* argument);
         void on_gcode_received(void* argument);
-        void on_config_reload(void* argument);
         void on_second_tick(void* argument);
         void on_get_public_data(void* argument);
         void on_set_public_data(void* argument);
@@ -36,12 +35,14 @@ class TemperatureControl : public Module {
         friend class PID_Autotuner;
 
     private:
+        void load_config();
         uint32_t thermistor_read_tick(uint32_t dummy);
         void pid_process(float);
 
         int pool_index;
 
         float target_temperature;
+        float max_temp;
 
         float preset1;
         float preset2;
@@ -67,6 +68,7 @@ class TemperatureControl : public Module {
             bool min_temp_violated:1;
             bool link_to_tool:1;
             bool active:1;
+            bool readonly:1;
         };
 
         uint16_t set_m_code;
