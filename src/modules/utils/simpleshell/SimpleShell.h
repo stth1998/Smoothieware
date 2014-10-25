@@ -34,6 +34,8 @@ private:
     static void pwd_command(string parameters, StreamOutput *stream );
     static void cat_command(string parameters, StreamOutput *stream );
     static void rm_command(string parameters, StreamOutput *stream );
+    static void mv_command(string parameters, StreamOutput *stream );
+    static void upload_command(string parameters, StreamOutput *stream );
     static void break_command(string parameters, StreamOutput *stream );
     static void reset_command(string parameters, StreamOutput *stream );
     static void dfu_command(string parameters, StreamOutput *stream );
@@ -48,6 +50,8 @@ private:
 
     static void load_command( string parameters, StreamOutput *stream);
     static void save_command( string parameters, StreamOutput *stream);
+
+    static void remount_command( string parameters, StreamOutput *stream);
 
     bool parse_command(const char *cmd, string args, StreamOutput *stream);
 

@@ -12,6 +12,8 @@
 #include "libs/nuts_bolts.h"
 #include "libs/utils.h"
 #include "Button.h"
+#include "libs/USBDevice/USBMSD/SDCard.h"
+#include "libs/SDFAT.h"
 
 #include "modules/utils/player/PlayerPublicAccess.h"
 #include "screens/CustomScreen.h"
@@ -23,10 +25,9 @@
 #include "ModifyValuesScreen.h"
 #include "PublicDataRequest.h"
 #include "PublicData.h"
+#include "StreamOutputPool.h"
+#include "platform_memory.h"
 
-#include "panels/I2CLCD.h"
-#include "panels/VikiLCD.h"
-#include "panels/Smoothiepanel.h"
 #include "panels/ReprapDiscountGLCD.h"
 #include "panels/ST7565.h"
 #include "panels/UniversalAdapter.h"
@@ -34,16 +35,18 @@
 #include "version.h"
 #include "checksumm.h"
 #include "ConfigValue.h"
+#include "Config.h"
+
+// for parse_pins in mbed
+#include "pinmap.h"
 
 #define panel_checksum             CHECKSUM("panel")
 #define enable_checksum            CHECKSUM("enable")
 #define lcd_checksum               CHECKSUM("lcd")
-#define i2c_lcd_checksum           CHECKSUM("i2c_lcd")
-#define viki_lcd_checksum          CHECKSUM("viki_lcd")
-#define smoothiepanel_checksum     CHECKSUM("smoothiepanel")
-#define panelolu2_checksum         CHECKSUM("panelolu2")
 #define rrd_glcd_checksum          CHECKSUM("reprap_discount_glcd")
 #define st7565_glcd_checksum       CHECKSUM("st7565_glcd")
+#define viki2_checksum             CHECKSUM("viki2")
+#define mini_viki2_checksum        CHECKSUM("mini_viki2")
 #define universal_adapter_checksum CHECKSUM("universal_adapter")
 
 #define menu_offset_checksum        CHECKSUM("menu_offset")
@@ -52,6 +55,11 @@
 #define jog_y_feedrate_checksum     CHECKSUM("beta_jog_feedrate")
 #define jog_z_feedrate_checksum     CHECKSUM("gamma_jog_feedrate")
 #define	longpress_delay_checksum	CHECKSUM("longpress_delay")
+
+#define ext_sd_checksum            CHECKSUM("external_sd")
+#define sdcd_pin_checksum          CHECKSUM("sdcd_pin")
+#define spi_channel_checksum       CHECKSUM("spi_channel")
+#define spi_cs_pin_checksum        CHECKSUM("spi_cs_pin")
 
 #define hotend_temp_checksum CHECKSUM("hotend_temperature")
 #define bed_temp_checksum    CHECKSUM("bed_temperature")
@@ -71,12 +79,17 @@ Panel::Panel()
     this->idle_time = 0;
     this->start_up = true;
     this->current_screen = NULL;
+    this->sd= nullptr;
+    this->extmounter= nullptr;
+    this->external_sd_enable= false;
     strcpy(this->playing_file, "Playing file");
 }
 
 Panel::~Panel()
 {
     delete this->lcd;
+    delete this->extmounter;
+    delete this->sd;
 }
 
 void Panel::on_module_loaded()
@@ -89,28 +102,35 @@ void Panel::on_module_loaded()
 
     // Initialise the LCD, see which LCD to use
     if (this->lcd != NULL) delete this->lcd;
-    int lcd_cksm = get_checksum(THEKERNEL->config->value(panel_checksum, lcd_checksum)->by_default("i2c")->as_string());
+    int lcd_cksm = get_checksum(THEKERNEL->config->value(panel_checksum, lcd_checksum)->by_default("reprap_discount_glcd")->as_string());
 
     // Note checksums are not const expressions when in debug mode, so don't use switch
-    if (lcd_cksm == i2c_lcd_checksum) {
-        this->lcd = new I2CLCD();
-    } else if (lcd_cksm == viki_lcd_checksum) {
-        this->lcd = new VikiLCD();
-        this->lcd->set_variant(0);
-    } else if (lcd_cksm == panelolu2_checksum) {
-        this->lcd = new VikiLCD();
-        this->lcd->set_variant(1);
-    } else if (lcd_cksm == smoothiepanel_checksum) {
-        this->lcd = new Smoothiepanel();
-    } else if (lcd_cksm == rrd_glcd_checksum) {
+    if (lcd_cksm == rrd_glcd_checksum) {
         this->lcd = new ReprapDiscountGLCD();
     } else if (lcd_cksm == st7565_glcd_checksum) {
         this->lcd = new ST7565();
+    } else if (lcd_cksm == viki2_checksum) {
+        this->lcd = new ST7565(1); // variant 1
+    } else if (lcd_cksm == mini_viki2_checksum) {
+        this->lcd = new ST7565(2); // variant 2
     } else if (lcd_cksm == universal_adapter_checksum) {
         this->lcd = new UniversalAdapter();
     } else {
-        // no lcd type defined
+        // no known lcd type defined
+        delete this;
         return;
+    }
+
+    // external sd
+    if(THEKERNEL->config->value( panel_checksum, ext_sd_checksum )->by_default(false)->as_bool()) {
+        this->external_sd_enable= true;
+        // external sdcard detect
+        this->sdcd_pin.from_string(THEKERNEL->config->value( panel_checksum, ext_sd_checksum, sdcd_pin_checksum )->by_default("nc")->as_string())->as_input();
+        this->extsd_spi_channel = THEKERNEL->config->value(panel_checksum, ext_sd_checksum, spi_channel_checksum)->by_default(0)->as_number();
+        string s= THEKERNEL->config->value( panel_checksum, ext_sd_checksum, spi_cs_pin_checksum)->by_default("2.8")->as_string();
+        s= "P" + s; // Pinnames need to be Px_x
+        this->extsd_spi_cs= parse_pins(s.c_str());
+        this->register_for_event(ON_SECOND_TICK);
     }
 
     // these need to be called here as they need the config cache loaded as they enumerate modules
@@ -177,6 +197,9 @@ void Panel::on_module_loaded()
 // Enter a screen, we only care about it now
 void Panel::enter_screen(PanelScreen *screen)
 {
+    if(this->current_screen != nullptr)
+        this->current_screen->on_exit();
+
     this->current_screen = screen;
     this->reset_counter();
     this->current_screen->on_enter();
@@ -594,13 +617,14 @@ static float getTargetTemperature(uint16_t heater_cs)
 void Panel::setup_temperature_screen()
 {
     // setup temperature screen
-    auto mvs= new ModifyValuesScreen();
+    auto mvs= new ModifyValuesScreen(false); // does not delete itself on exit
     this->temperature_screen= mvs;
 
     // enumerate heaters and add a menu item for each one
     vector<uint16_t> modules;
     THEKERNEL->config->get_module_list( &modules, temperature_control_checksum );
 
+    int cnt= 0;
     for(auto i : modules) {
         if (!THEKERNEL->config->value(temperature_control_checksum, i, enable_checksum )->as_bool()) continue;
         void *returned_data;
@@ -621,6 +645,70 @@ void Panel::setup_temperature_screen()
             1.0F, // increment
             0.0F, // Min
             500.0F // Max
-            );
+        );
+        cnt++;
+    }
+
+    if(cnt== 0) {
+        // no heaters and probably no extruders either
+        delete mvs;
+        this->temperature_screen= nullptr;
+    }
+}
+
+bool Panel::mount_external_sd(bool on)
+{
+    // now setup the external sdcard if we have one and mount it
+    if(on) {
+        if(this->sd == nullptr) {
+            PinName mosi, miso, sclk, cs= this->extsd_spi_cs;
+            if(extsd_spi_channel == 0) {
+                mosi = P0_18; miso = P0_17; sclk = P0_15;
+            } else if(extsd_spi_channel == 1) {
+                mosi = P0_9; miso = P0_8; sclk = P0_7;
+            } else{
+                this->external_sd_enable= false;
+                THEKERNEL->streams->printf("Bad SPI channel for external SDCard\n");
+                return false;
+            }
+            size_t n= sizeof(SDCard);
+            void *v = AHB0.alloc(n);
+            memset(v, 0, n); // clear the allocated memory
+            this->sd= new(v) SDCard(mosi, miso, sclk, cs); // allocate object using zeroed memory
+        }
+        delete this->extmounter; // if it was not unmounted before
+        size_t n= sizeof(SDFAT);
+        void *v = AHB0.alloc(n);
+        memset(v, 0, n); // clear the allocated memory
+        this->extmounter= new(v) SDFAT("ext", this->sd); // use cleared allocated memory
+        this->sd->disk_initialize(); // first one seems to fail, but works next time
+        THEKERNEL->streams->printf("External SDcard mounted as /ext\n");
+    }else{
+        delete this->extmounter;
+        this->extmounter= nullptr;
+        THEKERNEL->streams->printf("External SDcard unmounted\n");
+    }
+    return true;
+}
+
+void Panel::on_second_tick(void *arg)
+{
+    if(!this->external_sd_enable || this->start_up) return;
+
+    // sd insert detect, mount sdcard if inserted, unmount if removed
+    if(this->sdcd_pin.connected()) {
+        if(this->extmounter == nullptr && this->sdcd_pin.get()) {
+            mount_external_sd(true);
+            // go to the play screen and the /ext directory
+            // TODO we don't want to do this if we just booted and card was already in
+            THEKERNEL->current_path= "/ext";
+            MainMenuScreen *mms= static_cast<MainMenuScreen*>(this->top_screen);
+            THEPANEL->enter_screen(mms->file_screen);
+
+        }else if(this->extmounter != nullptr && !this->sdcd_pin.get()){
+            mount_external_sd(false);
+        }
+    }else{
+        // TODO for panels with no sd card detect we need to poll to see if card is inserted - or not
     }
 }
